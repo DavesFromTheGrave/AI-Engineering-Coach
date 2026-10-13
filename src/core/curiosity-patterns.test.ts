@@ -130,7 +130,7 @@ describe('Curiosity Prompt Quality findings', () => {
     const analyzer = new Analyzer([source, copy]);
     const native = analyzer.getAntiPatterns().patterns.filter(row => row.id.startsWith('curiosity-'));
     expect(native).toHaveLength(1);
-    expect(native[0].description).toContain('20 inquiry / 30 Build turns');
+    expect(native[0].description).toContain('20 inquiry / 30 Task execution turns');
     for (const filter of [{ fromDate: '2026-09-29' }, { workspaceId: 'other' }, { harness: 'Claude Code' }]) {
       const filtered = analyzer.getAntiPatterns(filter);
       expect(filtered.curiosityTier).toBe('insufficient');

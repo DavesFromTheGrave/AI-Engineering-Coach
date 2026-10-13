@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { CuriosityAnalyzer } from './analyzer-curiosity';
 import { curiosityBalance } from './curiosity-balance';
 import { activityCount } from './curiosity-activity';
+import { curiosityAntiPatterns } from './curiosity-patterns';
+import { sessionReference } from './curiosity-context';
 import { createRequest, createSession, stripSingleSession } from './parser-shared';
 import { detectCuriosity } from './curiosity';
 import type { SessionRequest } from './types';
@@ -101,13 +103,74 @@ describe('Curiosity activity', () => {
     expect(data.languages[0].sessionSamples).toHaveLength(1);
     expect(data.evidence.web[0]).toEqual({
       sessionId: 'a', name: 'Why does the cache expire?', timestamp: TIME, date: '2026-09-30',
-      workspace: 'project', harness: 'GitHub Copilot App',
+      promptPreview: requests[0].messageText, promptTruncated: false,
+      requestId: requests[0].requestId, workspaceId: 'project', workspace: 'project', harness: 'GitHub Copilot App',
     });
+
     expect(data.research.web).not.toHaveProperty('examples');
     const many = new CuriosityAnalyzer(Array.from({ length: 20 }, (_, index) =>
       session(`s-${index}`, [request(undefined, { toolsUsed: ['web_search'], timestamp: TIME + index })])), new Map()).getCuriosity();
     expect(many.daily[0].sessions?.web).toHaveLength(8);
     expect(many.research.web.sessionSamples).toHaveLength(8);
+  });
+
+  it('retains the sampled prompt and request identity even when timestamps tie', () => {
+    const first = request('How does the initial request work?');
+    const later = request('Why does the later request need research?', {
+      toolsUsed: ['web_fetch'], webDomains: ['example.org'], referencedFiles: ['src/cache.ts'],
+    });
+    const data = analyze([first, later, request('Run the tests.', { toolsUsed: ['powershell'] })]);
+    for (const sample of [data.daily[0].sessions?.web[0], data.research.web.sessionSamples[0], data.evidence.web[0]]) {
+      expect(sample).toMatchObject({ requestId: later.requestId, workspaceId: 'project',
+        name: first.messageText, promptPreview: later.messageText });
+    }
+    for (const sample of [data.chains.examples[0].session, data.languages[0].sessionSamples[0]]) {
+      expect(sample).toMatchObject({ requestId: first.requestId, promptPreview: first.messageText });
+    }
+    expect(data.counts.action).toBe(1);
+  });
+
+  it('bounds and normalizes sampled previews without substituting the session title for missing text', () => {
+    const first = request('How does the initial request work?');
+    const later = request(`  Why does this sampled follow-up differ?\n\t${'Additional recorded context. '.repeat(5)}`);
+    const source = session('previews', [first, later]);
+    const sample = sessionReference(source, later);
+    expect(sample).toMatchObject({ name: first.messageText, requestId: later.requestId,
+      promptPreview: later.messageText.replaceAll(/\s+/g, ' ').trim().slice(0, 80), promptTruncated: true });
+    expect(sample.promptPreview).toHaveLength(80);
+    expect(sessionReference(source, request('')).promptPreview).toBe('');
+  });
+
+  it.each([79, 80, 81])('marks a %i-character prompt as truncated only when it exceeds the preview limit', length => {
+    const turn = request('x'.repeat(length));
+    const sample = sessionReference(session('limits', [turn]), turn);
+    expect(sample.promptPreview).toBe(turn.messageText.slice(0, 80));
+    expect(sample.promptTruncated).toBe(length > 80);
+  });
+
+  it('does not treat normalized whitespace as truncated prompt content', () => {
+    const turn = request(`  ${'x'.repeat(80)}\n\t`);
+    expect(sessionReference(session('whitespace', [turn]), turn)).toMatchObject({
+      promptPreview: 'x'.repeat(80), promptTruncated: false,
+    });
+  });
+
+  it('allows a reader when stored text is incomplete even if its normalized preview is short', () => {
+    const turn = request(`Recorded prefix.${' '.repeat(600)}More recorded content.`);
+    const source = session('stored-preview', [turn]);
+    stripSingleSession(source);
+    expect(sessionReference(source, turn)).toMatchObject({ promptPreview: 'Recorded prefix.', promptTruncated: true });
+  });
+
+  it('does not group Map and Set inquiries but still finds genuine repeats across sessions', () => {
+    const map = 'How does `Map` store values in JavaScript?';
+    const set = 'How does `Set` store values in JavaScript?';
+    const sessions = [session('map', [request(map)]), session('set', [request(set)])];
+    const distinct = new CuriosityAnalyzer(sessions, new Map()).getCuriosity();
+    expect(distinct.repeated).toEqual([]);
+    expect(curiosityAntiPatterns(distinct).some(pattern => pattern.id === 'curiosity-repeated-wording')).toBe(false);
+    const repeated = new CuriosityAnalyzer([...sessions, session('repeat', [request(map)])], new Map()).getCuriosity();
+    expect(repeated.repeated).toMatchObject([{ text: 'how does map store values in javascript', count: 2, sessions: 2 }]);
   });
 
   it('adds bounded source and relative-path tags, counting distinct selected human turns', () => {

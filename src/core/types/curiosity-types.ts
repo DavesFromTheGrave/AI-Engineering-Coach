@@ -15,7 +15,11 @@ export const CURIOSITY_TIER_LABELS: Record<CuriosityTier, string> = {
 export interface CuriosityFilter extends DateFilter { language?: string }
 export interface CuriositySession {
   sessionId: string;
+  requestId: string;
+  workspaceId: string;
   name: string;
+  promptPreview: string;
+  promptTruncated: boolean;
   date: string;
   timestamp: number;
   workspace: string;

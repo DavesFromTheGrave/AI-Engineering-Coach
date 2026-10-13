@@ -12,7 +12,7 @@ describe('Curiosity labels', () => {
   it('renames model and web inquiry without changing activity identities', () => {
     expect(ACTIVITIES.map(({ id, label }) => [id, label])).toEqual([
       ['direct', 'Model knowledge inquiry'], ['web', 'Web-grounded inquiry'],
-      ['repository', 'Program comprehension'], ['action', 'Build'],
+      ['repository', 'Program comprehension'], ['action', 'Task execution'],
     ]);
   });
 
@@ -35,7 +35,8 @@ describe('Curiosity chart geometry', () => {
   });
 
   it('merges weekly hover names by session identity and keeps the most recent date', () => {
-    const old = { sessionId: 's', name: 'Explain the cache', date: '2026-09-28',
+    const old = { sessionId: 's', requestId: 'r', workspaceId: 'project', name: 'Explain the cache',
+      promptPreview: 'Explain the cache', promptTruncated: false, date: '2026-09-28',
       timestamp: 1, workspace: 'project', harness: 'Local Agent' };
     const names = { direct: [old], web: [], repository: [], action: [] };
     const bucket = activityBuckets([
@@ -72,7 +73,7 @@ describe('Curiosity chart geometry', () => {
     expect(activityBuckets(daily, 'monthly').reduce((total, bucket) => total + bucket.counts.direct, 0)).toBe(5);
   });
 
-  it('includes every inquiry category and counts Build in the share denominator', () => {
+  it('includes every inquiry category and counts Task execution in the share denominator', () => {
     expect(explorationShare({ direct: 1, web: 2, repository: 3, action: 18 })).toBe(25);
     expect(explorationShare({ direct: 0, web: 0, repository: 0, action: 3 })).toBe(0);
     expect(explorationShare({ direct: 1, web: 2, repository: 3, action: 0 })).toBe(100);

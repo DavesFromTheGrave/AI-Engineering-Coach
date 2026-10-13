@@ -64,6 +64,8 @@ function withoutFences(text: string): string {
 export function detectCuriosity(text: string): CuriositySignal {
   if (text.length > 256_000) return { kind: 'unscanned', excerpts: [] };
   const clean = withoutFences(latestUserTurn(text).replaceAll(WRAPPER, '').replaceAll(WRAPPER_MARK, ' '))
+    .replaceAll(/^[ \t]*`[^`\n]*`[ \t]*$/gm, '')
+    .replaceAll(/`([a-zA-Z_$][\w.$]*)`/g, '$1')
     .replaceAll(/^[ \t]*>[^\n]*|`[^`\n]*`|"[^"\n]*"|https?:\/\/[^\s<>]+/gm, ' ')
     .trim();
   if (!clean) return { kind: 'excluded', excerpts: [] };

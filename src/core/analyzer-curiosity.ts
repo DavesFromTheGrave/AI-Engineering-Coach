@@ -21,7 +21,7 @@ const sessionLists = (): Record<CuriosityActivity, CuriositySession[]> => ({ dir
 function questionExample(request: SessionRequest, session: Session, context?: CuriositySession['context']): CuriosityExample {
   const signal = request.curiosity;
   return {
-    ...sessionReference(session, request.timestamp!, context),
+    ...sessionReference(session, request, context),
     text: (signal?.kind === 'analyzed' && signal.features.question.excerpts[0] || request.messageText).slice(0, 240),
   };
 }
@@ -75,7 +75,7 @@ interface SessionEvidence {
   session: Session;
   profile: Map<string, Set<string>>;
   context: CuriositySession['context'];
-  reference: (timestamp: number) => CuriositySession;
+  reference: (request: SessionRequest) => CuriositySession;
   human: boolean;
   activities: Set<CuriosityActivity>;
   sources: Set<InvestigationSource>;
@@ -128,7 +128,7 @@ class CuriositySummary {
     const context = sessionContext(session, requests);
     const evidence: SessionEvidence = {
       session, profile, context, human: false, activities: new Set(), sources: new Set(),
-      reference: timestamp => sessionReference(session, timestamp, context),
+      reference: request => sessionReference(session, request, context),
     };
     this.addLanguageFiles(evidence);
     const selected = !language || profile.has(language) || language === 'unrecorded' && !profile.size;
@@ -175,7 +175,7 @@ class CuriositySummary {
       if (!row.humanEvents.has(id)) {
         row.humanEvents.add(id);
         row.sessions.add(evidence.session);
-        keepSession(row.sessionSamples, evidence.reference(request.timestamp!));
+        keepSession(row.sessionSamples, evidence.reference(request));
       }
       if (request.curiosity?.kind !== 'analyzed' || !isCuriosityActivity(activity) || row.events.has(id)) continue;
       row.events.add(id);
@@ -209,7 +209,7 @@ class CuriositySummary {
     daily.counts[activity]++;
     weekly.counts[activity]++;
     weekly.dates.add(date);
-    keepSession(daily.sessions[activity], evidence.reference(request.timestamp!));
+    keepSession(daily.sessions[activity], evidence.reference(request));
     this.recordActivity(request, activity, evidence, signal);
   }
 
@@ -221,14 +221,14 @@ class CuriositySummary {
       row.turns++;
       if (request.curiosity?.kind === 'analyzed' && activity === 'action') row.withinAction++;
       evidence.sources.add(source);
-      keepSession(row.sessionSamples, evidence.reference(request.timestamp!));
+      keepSession(row.sessionSamples, evidence.reference(request));
     }
   }
 
   private recordActivity(request: SessionRequest, activity: CuriosityActivity, evidence: SessionEvidence, signal: AnalyzedSignal): void {
     if (request.answerEvidence === 'legacy' && activity !== 'action') this.data.coverage.legacyAnswers++;
     if (activity === 'action' && signal.features.question.count) this.data.questionLedActions++;
-    keepRecent(this.data.evidence[activity], evidence.reference(request.timestamp!), item => item.timestamp, 20);
+    keepRecent(this.data.evidence[activity], evidence.reference(request), item => item.timestamp, 20);
     if (activity === 'action' || !signal.repeatedQuestions.length) return;
     const example = questionExample(request, evidence.session, evidence.context);
     const week = isoWeek(new Date(request.timestamp!));

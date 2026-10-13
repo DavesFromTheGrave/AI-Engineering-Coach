@@ -32,10 +32,11 @@ const COMMAND_TOOLS = new Set([
   'bash', 'terminal', 'shell', 'shell_command', 'exec', 'exec_command', 'execute_command',
   'run_command', 'run_in_terminal', 'run_terminal_command', 'execute',
   'read_bash', 'read_process', 'get_terminal_output', 'stop_bash',
+  'powershell', 'read_powershell', 'stop_powershell',
 ]);
 const NEUTRAL_TOOLS = new Set([
   'report_intent', 'skill', 'manage_todo_list', 'todowrite', 'todoread', 'rename_session',
-  'list_bash', 'task_complete',
+  'list_bash', 'list_powershell', 'task_complete',
 ]);
 const CLARIFICATION_TOOLS = new Set(['ask_user', 'askuserquestion', 'vscode_askquestions']);
 const INVESTIGATION_TOOLS = new Set(['task', 'agent', 'spawn_agent']);

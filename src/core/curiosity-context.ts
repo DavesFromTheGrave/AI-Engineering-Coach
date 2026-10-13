@@ -25,10 +25,15 @@ export function eventKey(request: SessionRequest, session: Session, index: numbe
     : JSON.stringify([source, session.workspaceId, session.sessionId, index]);
 }
 
-export function sessionReference(session: Session, timestamp: number, context?: CuriositySession['context']): CuriositySession {
+export function sessionReference(session: Session, request: SessionRequest, context?: CuriositySession['context']): CuriositySession {
   const name = session.requests.find(request => request.curiosity?.kind !== 'excluded' && request.messageText)?.messageText
     .replaceAll(/\s+/g, ' ').trim().slice(0, 80) || 'Untitled session';
-  return { sessionId: session.sessionId, name, timestamp, date: toDateStr(timestamp),
+  const promptText = request.messageText.replaceAll(/\s+/g, ' ').trim();
+  const promptPreview = promptText.slice(0, 80);
+  const promptTruncated = promptText.length > 80 || request.messageText.length < request.messageLength;
+  const timestamp = request.timestamp!;
+  return { sessionId: session.sessionId, requestId: request.requestId, workspaceId: session.workspaceId,
+    name, promptPreview, promptTruncated, timestamp, date: toDateStr(timestamp),
     workspace: session.workspaceName, harness: session.harness, ...(context?.length ? { context } : {}) };
 }
 

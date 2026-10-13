@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import type { CuriosityData } from '../../src/core/types/curiosity-types';
 import { curiosityBalance } from '../../src/core/curiosity-balance';
+import type { Session } from '../../src/core/types';
 
 const URL = 'http://localhost:3999/tests/e2e/harness?page=curiosity';
 type MockWindow = Window & {
@@ -12,6 +13,10 @@ type MockWindow = Window & {
   curiosityPoints?: { x: number; y: number }[];
   curiosityCurveStarts?: number[];
   previewHides?: number;
+  detailCalls?: number;
+  promptFailure?: boolean;
+  releasePromptFailure?: () => void;
+  mockCuriosityPrompt?: string;
 };
 const values = '.curiosity-summary dd > strong';
 const badgeProperties = ['color', 'background-color', 'font-family', 'font-size', 'font-weight', 'font-variant-numeric',
@@ -29,6 +34,10 @@ async function patchCuriosity(page: Page, patch: Partial<CuriosityData>): Promis
 }
 async function dataFor(page: Page): Promise<CuriosityData> {
   return page.evaluate(() => (window as MockWindow).getMockData('getCuriosity', {}) as CuriosityData);
+}
+async function setMockPrompt(page: Page, text = 'Please inspect the recorded source expansion and explain why this specific feature fails. '.repeat(3)): Promise<void> {
+  await page.evaluate(text => { (window as MockWindow).mockCuriosityPrompt = text; }, text);
+  await page.locator('.curiosity-range .cons-range-btn.active').click();
 }
 function captureChartText(page: Page) {
   return page.addInitScript(() => {
@@ -90,7 +99,7 @@ test('shows a compact overview, exact totals, SVGs and no inline activity eviden
   await page.goto(URL);
   await expect(page.locator(values)).toHaveText(['3', '8', '2']);
   await expect(page.locator('.curiosity-summary')).toContainText('/ 3 100%');
-  await expect(page.locator('.curiosity-summary > div').first()).toHaveAttribute('title', /3 inquiry sessions also included Build turns/);
+  await expect(page.locator('.curiosity-summary > div').first()).toHaveAttribute('title', /3 inquiry sessions also included Task execution turns/);
   await expect(page.locator('.curiosity-summary')).toContainText('66.7% of classified turns');
   await expect(page.locator('.curiosity-tabs, .curiosity-flow, .curiosity-pathways, .curiosity-reading, .curiosity-footer, .curiosity-filters')).toHaveCount(0);
   await expect(page.locator('#curiosity-results select')).toHaveCount(0);
@@ -116,7 +125,7 @@ test('shows a compact overview, exact totals, SVGs and no inline activity eviden
 test('previews recent follow-ups with elapsed spans on pointer hover and keyboard focus', async ({ page }) => {
   await page.goto(URL);
   const target = page.locator('[aria-label="Preview follow-up sequences"]');
-  const overlay = page.getByRole('tooltip');
+  const overlay = page.getByRole('dialog');
   await target.hover();
   await expect(target).toHaveCSS('cursor', 'pointer');
   await expect(overlay).toBeVisible();
@@ -144,7 +153,7 @@ test('shows only the latest sampled follow-up per session and omits missing timi
   ] } });
   await page.getByRole('button', { name: 'All time', exact: true }).click();
   await page.locator('[aria-label="Preview follow-up sequences"]').focus();
-  const overlay = page.getByRole('tooltip');
+  const overlay = page.getByRole('dialog');
   await expect(overlay.locator('li')).toHaveCount(2);
   await expect(overlay.locator('.curiosity-hover-duration')).toHaveText(['<1 min elapsed / 2 inquiry turns']);
   await expect(overlay).not.toContainText('~2 min');
@@ -157,10 +166,10 @@ test('does not attach elapsed spans to sessions without a sampled follow-up', as
   await patchCuriosity(page, { chains: { ...data.chains, total: 0, sustained: 0, examples: [] } });
   await page.getByRole('button', { name: 'All time', exact: true }).click();
   await page.locator('.curiosity-legend > span').first().focus();
-  await expect(page.getByRole('tooltip').locator('li')).toHaveCount(2);
+  await expect(page.getByRole('dialog').locator('li')).toHaveCount(2);
   await expect(page.locator('.curiosity-hover-duration')).toHaveCount(0);
   await page.locator('[aria-label="Preview follow-up sequences"]').focus();
-  await expect(page.getByRole('tooltip')).toContainText('No recent sessions recorded.');
+  await expect(page.getByRole('dialog')).toContainText('No recent sessions recorded.');
 });
 
 test('uses the standard five date-range buttons with exact selected bounds', async ({ page }) => {
@@ -184,6 +193,334 @@ test('uses the standard five date-range buttons with exact selected bounds', asy
     await expect.poll(() => page.evaluate(() => (window as MockWindow).curiosityParams)).toEqual(expected);
   }
   expect(await dataFor(page)).not.toHaveProperty('pathways');
+});
+
+test('preserves either chart measure through local and global filter refreshes', async ({ page }) => {
+  await page.goto(URL);
+  for (const measure of ['All turns', 'Explore']) {
+    const button = page.getByRole('button', { name: measure, exact: true });
+    await button.click();
+    for (const range of ['Last 7 days', 'Last 4 weeks', 'Last 3 months', 'Last 6 months', 'All time']) {
+      await page.getByRole('button', { name: range, exact: true }).click();
+      await expect(button).toHaveAttribute('aria-pressed', 'true');
+    }
+    await page.locator('.curiosity-language-list').getByRole('button', { name: /TypeScript/ }).click();
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    await page.locator('#harness-filter').selectOption('Local Agent');
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#ws-filter-input').fill('my-api');
+    await page.locator('#ws-filter-list [data-value="ws-1"]').click();
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#harness-filter').selectOption('');
+  }
+});
+
+test('explains Curiosity through a compact disclosure without research links or a learning score', async ({ page }) => {
+  await page.goto(URL);
+  const button = page.getByRole('button', { name: 'What does Curiosity show?', exact: true });
+  const explanation = page.locator('#curiosity-about-panel');
+  await expect(button).toHaveAttribute('aria-expanded', 'false');
+  await expect(explanation).toHaveCount(0);
+  await button.click();
+  await expect(button).toHaveAttribute('aria-expanded', 'true');
+  await expect(explanation).toContainText("understand what you're building");
+  await expect(explanation).toContainText('not a learning score');
+  await expect(explanation).toContainText('Task execution can involve thoughtful work');
+  await expect(explanation.locator('a')).toHaveCount(0);
+  await explanation.click();
+  await expect(explanation).toBeVisible();
+  await page.getByRole('heading', { name: 'Curiosity', exact: true }).click();
+  await expect(explanation).toHaveCount(0);
+  await button.press('Enter');
+  await expect(explanation).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(explanation).toHaveCount(0);
+  await expect(button).toBeFocused();
+});
+
+for (const length of [79, 80, 81]) {
+  test(`only expands truncated prompt previews at the ${length}-character boundary`, async ({ page }) => {
+    await page.goto(URL);
+    const text = 'x'.repeat(length);
+    await setMockPrompt(page, text);
+    await page.evaluate(() => {
+      const root = window as MockWindow;
+      const original = root.getMockData;
+      root.detailCalls = 0;
+      root.getMockData = (method, params) => {
+        if (method === 'getSessionDetail') root.detailCalls!++;
+        return original(method, params);
+      };
+    });
+    const source = page.getByRole('region', { name: 'Recorded investigation sources' }).getByRole('button', { name: /Web sources/ });
+    await source.focus();
+    const overlay = page.getByRole('dialog');
+    const preview = overlay.locator('.curiosity-prompt-preview').first();
+    const label = text.slice(0, 80) + (length > 80 ? '...' : '');
+    await expect(preview).toHaveText(label);
+    await expect(preview).toHaveCSS('font-weight', '700');
+    await expect(preview).toHaveCSS('color', await overlay.evaluate(element => getComputedStyle(element).color));
+    if (length > 80) {
+      await expect(preview).toHaveAttribute('aria-expanded', 'false');
+      await preview.click();
+      await expect(overlay.getByLabel('Prompt text')).toHaveText(text);
+    } else {
+      await expect(overlay.locator('.curiosity-prompt-toggle')).toHaveCount(0);
+      expect(await preview.evaluate(element => element.tagName)).toBe('SPAN');
+      await expect(preview).toHaveCSS('cursor', 'default');
+      await preview.click();
+      await expect(overlay.getByLabel('Prompt text')).toHaveCount(0);
+    }
+    expect(await page.evaluate(() => (window as MockWindow).detailCalls)).toBe(length > 80 ? 1 : 0);
+    await source.click();
+    const row = page.locator('.curiosity-session-list li').first();
+    await expect(row.locator('.curiosity-prompt-preview')).toHaveText(label);
+    await expect(row.locator('.curiosity-prompt-preview')).toHaveCSS('font-weight', '700');
+    await row.locator('.curiosity-prompt-preview').click();
+    if (length > 80) await expect(row.getByLabel('Prompt text')).toHaveText(text);
+    else {
+      await expect(row.locator('.curiosity-prompt-toggle')).toHaveCount(0);
+      await expect(row.getByLabel('Prompt text')).toHaveCount(0);
+    }
+    expect(await page.evaluate(() => (window as MockWindow).detailCalls)).toBe(length > 80 ? 2 : 0);
+    await expect(row.getByRole('link', { name: 'Open in Timeline', exact: true })).toBeVisible();
+  });
+}
+
+test('expands the same sampled prompt shown on the top line, even with tied timestamps', async ({ page }) => {
+  await page.goto(URL);
+  const data = await dataFor(page);
+  const sampled = data.research.web.sessionSamples[0];
+  const text = 'Why does the AG-UI source expansion fail again?\n' + 'Please investigate this specific failure. '.repeat(5);
+  const preview = text.replaceAll(/\s+/g, ' ').trim().slice(0, 80);
+  await patchCuriosity(page, { research: { ...data.research, web: { ...data.research.web,
+    sessionSamples: [{ ...sampled, promptPreview: preview, promptTruncated: true }, ...data.research.web.sessionSamples.slice(1)] } } });
+  await page.evaluate(({ sampled, text }) => {
+    const root = window as MockWindow;
+    const original = root.getMockData;
+    root.detailCalls = 0;
+    root.getMockData = (method, params) => {
+      const result = original(method, params);
+      if (method !== 'getSessionDetail') return result;
+      root.detailCalls!++;
+      const detail = result as Session;
+      return { ...detail, requests: detail.requests.map(request => ({
+        ...request, timestamp: sampled.timestamp,
+        ...(request.requestId === sampled.requestId ? { messageText: text, messageLength: text.length } : {}),
+      })) };
+    };
+  }, { sampled, text });
+  await page.getByRole('button', { name: 'All time', exact: true }).click();
+  const source = page.getByRole('region', { name: 'Recorded investigation sources' }).getByRole('button', { name: /Web sources/ });
+  await source.focus();
+  const overlay = page.getByRole('dialog');
+  const trigger = overlay.getByRole('button', { name: `${preview}...`, exact: true });
+  await expect(trigger).toHaveText(`${preview}...`);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await expect(overlay).not.toContainText(sampled.name);
+  await expect(page.getByRole('button', { name: /^(Show|Hide) prompt$/ })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as MockWindow).detailCalls)).toBe(0);
+  await source.press('ArrowDown');
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(overlay.getByLabel('Prompt text')).toHaveText(text);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await expect(trigger).toHaveText(`${preview}...`);
+  expect(await page.evaluate(() => (window as MockWindow).detailCalls)).toBe(1);
+  await trigger.click();
+  await expect(overlay.getByLabel('Prompt text')).toHaveCount(0);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await expect(overlay).toBeVisible();
+});
+
+test('uses a neutral prompt label rather than substituting the session title when a preview is absent', async ({ page }) => {
+  await page.goto(URL);
+  const data = await dataFor(page);
+  const sampled = data.research.web.sessionSamples[0];
+  await patchCuriosity(page, { research: { ...data.research, web: { ...data.research.web,
+    sessionSamples: [{ ...sampled, promptPreview: '', promptTruncated: true }] } } });
+  await page.getByRole('button', { name: 'All time', exact: true }).click();
+  await page.getByRole('region', { name: 'Recorded investigation sources' }).getByRole('button', { name: /Web sources/ }).focus();
+  const overlay = page.getByRole('dialog');
+  await expect(overlay).not.toContainText(sampled.name);
+  await overlay.getByRole('button', { name: 'Recorded prompt...', exact: true }).click();
+  await expect(overlay.getByLabel('Prompt text')).toHaveText('Implement the cache.');
+});
+
+for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+  for (const area of ['chart', 'language']) {
+    test(`reads and scrolls long escaped prompts from ${area} previews at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto(URL);
+      const text = '<img src=x onerror="window.promptExecuted=true">\n' + 'A detailed prompt with preserved line breaks.\n'.repeat(80) + 'Final prompt line.';
+      await setMockPrompt(page, text);
+      const trigger = area === 'chart' ? page.locator('#curiosityBalance') : page.locator('.curiosity-language-list button').first();
+      if (area === 'chart') {
+        const bounds = (await trigger.boundingBox())!;
+        await trigger.hover({ position: { x: bounds.width / 2, y: bounds.height - 45 } });
+      } else await trigger.hover();
+      const overlay = page.getByRole('dialog');
+      const promptButton = overlay.locator('.curiosity-prompt-toggle').first();
+      await promptButton.click();
+      const pane = overlay.getByLabel('Prompt text');
+      await expect(pane).toHaveText(text);
+      expect((await pane.boundingBox())!.y).toBeGreaterThanOrEqual((await promptButton.boundingBox())!.y
+        + (await promptButton.boundingBox())!.height);
+      await expect(overlay.locator('img')).toHaveCount(0);
+      await expect(overlay).toBeInViewport({ ratio: 1 });
+      expect(await pane.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+      expect(await pane.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      await pane.hover();
+      await page.mouse.wheel(0, 500);
+      await expect.poll(() => pane.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+      await page.waitForTimeout(220);
+      await expect(overlay).toBeVisible();
+      await pane.focus();
+      await page.keyboard.press('Escape');
+      await expect(overlay).toBeHidden();
+      await expect(trigger).toBeFocused();
+      expect(await page.evaluate(() => (window as Window & { promptExecuted?: boolean }).promptExecuted)).toBeUndefined();
+    });
+  }
+}
+
+test('surfaces prompt errors, retries them and identifies truncated stored previews', async ({ page }) => {
+  await page.goto(URL);
+  await setMockPrompt(page);
+  await page.evaluate(() => {
+    const root = window as MockWindow;
+    const original = root.getMockData;
+    root.promptFailure = true;
+    root.getMockData = (method, params) => {
+      if (method === 'getSessionDetail' && root.promptFailure) return new Promise(resolve => {
+        root.releasePromptFailure = () => resolve({ error: 'Source unavailable' });
+      });
+      const result = original(method, params);
+      if (method !== 'getSessionDetail') return result;
+      const detail = result as Session;
+      return { ...detail, requests: detail.requests.map(request => ({ ...request, messageLength: request.messageText.length + 1000 })) };
+    };
+  });
+  await page.locator('.curiosity-language-list button').first().hover();
+  const overlay = page.getByRole('dialog');
+  await overlay.locator('.curiosity-prompt-toggle').first().click();
+  await expect(overlay.getByRole('status')).toHaveText('Loading prompt...');
+  await page.evaluate(() => {
+    const release = (window as MockWindow).releasePromptFailure;
+    if (!release) throw new Error('The prompt request has not started.');
+    release();
+  });
+  await expect(overlay.getByRole('alert')).toContainText('Source unavailable');
+  await page.evaluate(() => { (window as MockWindow).promptFailure = false; });
+  await overlay.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(overlay.getByLabel('Prompt text')).toBeVisible();
+  await expect(overlay).toContainText('Only a truncated stored preview is available.');
+});
+
+for (const failure of ['missing prompt', 'mismatched session']) {
+  test(`does not substitute another prompt for a ${failure}`, async ({ page }) => {
+    await page.goto(URL);
+    await setMockPrompt(page);
+    await page.evaluate(failure => {
+      const root = window as MockWindow;
+      const original = root.getMockData;
+      root.getMockData = (method, params) => {
+        const result = original(method, params);
+        return method === 'getSessionDetail' ? { ...(result as Session),
+          ...(failure === 'missing prompt' ? { requests: [] } : { workspaceId: 'another-project' }) } : result;
+      };
+    }, failure);
+    await page.locator('.curiosity-language-list button').first().hover();
+    const overlay = page.getByRole('dialog');
+    await overlay.locator('.curiosity-prompt-toggle').first().click();
+    await expect(overlay.getByRole('alert')).toContainText('unavailable');
+    await expect(overlay.getByLabel('Prompt text')).toHaveCount(0);
+  });
+}
+
+test('ignores a late prompt response after a filter refresh or leaving the page', async ({ page }) => {
+  await page.goto(URL);
+  await setMockPrompt(page);
+  await page.evaluate(() => {
+    (window as MockWindow).mockResponseDelay = method => method === 'getSessionDetail' ? 500 : 5;
+  });
+  await page.locator('.curiosity-language-list button').first().hover();
+  await page.getByRole('dialog').locator('.curiosity-prompt-toggle').first().click();
+  await page.getByRole('button', { name: 'Last 7 days', exact: true }).click();
+  await page.waitForTimeout(650);
+  await expect(page.getByLabel('Prompt text')).toHaveCount(0);
+  await page.locator('.curiosity-language-list button').first().hover();
+  await page.getByRole('dialog').locator('.curiosity-prompt-toggle').first().click();
+  await page.locator('#sidebar [data-page="timeline"]').click();
+  await page.waitForTimeout(650);
+  await expect(page.getByRole('heading', { name: 'Timeline', exact: true })).toBeVisible();
+  await expect(page.locator('.error-boundary')).toHaveCount(0);
+  await expect(page.getByLabel('Prompt text')).toHaveCount(0);
+});
+
+test('reads the sampled prompt in inspected session rows without losing Timeline navigation', async ({ page }) => {
+  await page.goto(URL);
+  const text = 'Implement the cache and inspect the recorded source expansion.\n'.repeat(3);
+  await setMockPrompt(page, text);
+  await page.getByRole('region', { name: 'Recorded investigation sources' }).getByRole('button', { name: /Web sources/ }).click();
+  const row = page.locator('.curiosity-session-list li').first();
+  const trigger = row.getByRole('button', { name: `${text.replaceAll(/\s+/g, ' ').trim().slice(0, 80)}...`, exact: true });
+  await trigger.press('Space');
+  await expect(row.getByLabel('Prompt text')).toHaveText(text);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await row.getByLabel('Prompt text').focus();
+  await page.keyboard.press('Escape');
+  await expect(row.getByLabel('Prompt text')).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await trigger.press('Enter');
+  await expect(row.getByLabel('Prompt text')).toHaveText(text);
+  await row.getByRole('link', { name: 'Open in Timeline', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Timeline', exact: true })).toBeVisible();
+});
+
+test('keeps inspected prompts open while other previews appear and close', async ({ page }) => {
+  await page.goto(URL);
+  const text = 'Detailed task instructions.\n'.repeat(80);
+  await setMockPrompt(page, text);
+  const source = page.getByRole('region', { name: 'Recorded investigation sources' }).getByRole('button', { name: /Web sources/ });
+  await source.click();
+  await page.evaluate(() => {
+    const root = window as MockWindow;
+    const original = root.getMockData;
+    root.detailCalls = 0;
+    root.mockResponseDelay = method => method === 'getSessionDetail' ? 500 : 5;
+    root.getMockData = (method, params) => {
+      const result = original(method, params);
+      if (method === 'getSessionDetail') root.detailCalls!++;
+      return result;
+    };
+  });
+  const row = page.locator('.curiosity-session-list li').first();
+  await row.locator('.curiosity-prompt-toggle').click();
+  await expect(row.getByRole('status')).toHaveText('Loading prompt...');
+  await page.locator('.curiosity-language-list button').first().hover();
+  const overlay = page.getByRole('dialog');
+  await expect(overlay).toBeVisible();
+  await expect(row.locator('.curiosity-prompt-toggle')).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('heading', { name: 'Curiosity', exact: true }).hover();
+  await expect(overlay).toBeHidden();
+  const pane = row.getByLabel('Prompt text');
+  await expect(pane).toHaveText(text);
+  await pane.hover();
+  await page.mouse.wheel(0, 150);
+  await expect.poll(() => pane.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  const scrollTop = await pane.evaluate(element => element.scrollTop);
+  await page.getByRole('heading', { name: 'Curiosity', exact: true }).hover();
+  await source.focus();
+  await expect(overlay).toBeVisible();
+  await expect(pane).toHaveText(text);
+  expect(await pane.evaluate(element => element.scrollTop)).toBe(scrollTop);
+  await row.locator('.curiosity-prompt-toggle').focus();
+  await expect(overlay).toBeHidden();
+  await expect(pane).toHaveText(text);
+  expect(await pane.evaluate(element => element.scrollTop)).toBe(scrollTop);
+  expect(await page.evaluate(() => (window as MockWindow).detailCalls)).toBe(1);
 });
 
 test('matches exact Anti-Patterns category-card badge styles, bounds and row alignment', async ({ page }) => {
@@ -241,7 +578,12 @@ test('matches exact Anti-Patterns category-card badge styles, bounds and row ali
     row.children[1].textContent = '-50% MoM';
     row.children[1].className = 'trend-badge trend-worsening';
   }, curiosityBounds.width);
-  expect(await category.locator('.ap-score-deltas').evaluate(rowBounds)).toEqual(curiosityBounds);
+  const antiPatternBounds = await category.locator('.ap-score-deltas').evaluate(rowBounds);
+  expect({ ...antiPatternBounds, badges: undefined }).toEqual({ ...curiosityBounds, badges: undefined });
+  for (const [index, badge] of antiPatternBounds.badges.entries()) {
+    expect({ ...badge, width: undefined }).toEqual({ ...curiosityBounds.badges[index], width: undefined });
+    expect(badge.width).toBeCloseTo(curiosityBounds.badges[index].width, 1);
+  }
 });
 
 test('does not invent percentages when previous activity is missing', async ({ page }) => {
@@ -309,19 +651,19 @@ test('ignores a late comparison error after leaving Curiosity', async ({ page })
   await expect(page.locator('.error-boundary')).toHaveCount(0);
 });
 
-test('shows real session names on source hover and keeps research within project work separate', async ({ page }) => {
+test('shows sampled prompts on source hover and keeps research within project work separate', async ({ page }) => {
   await page.goto(URL);
   const web = page.getByRole('region', { name: 'Recorded investigation sources' }).getByRole('button', { name: /Web sources/ });
   await web.hover();
-  await expect(page.getByRole('tooltip')).toContainText('How does recursion use the stack?');
-  await expect(page.getByRole('tooltip')).toContainText('What does the Python reference say?');
+  await expect(page.getByRole('dialog')).toContainText('Implement the cache.');
+  await expect(page.getByRole('dialog')).toContainText('How does the Python parser recover?');
   await web.click();
-  await expect(page.locator('.curiosity-trend')).toContainText('7 recorded turns; 1 during Build turns');
+  await expect(page.locator('.curiosity-trend')).toContainText('7 recorded turns; 1 during Task execution turns');
   await expect(page.locator(values)).toHaveText(['3', '8', '2']);
   await expect(page.locator('#content')).not.toContainText('Program comprehension evidence');
 });
 
-test('chart hover renders session names instead of a turn-count-only tooltip', async ({ page }) => {
+test('chart hover renders sampled prompts instead of a turn-count-only tooltip', async ({ page }) => {
   await captureChartText(page);
   await page.goto(URL);
   await expect.poll(() => page.evaluate(() => (window as MockWindow).curiosityAxis?.length ?? 0)).toBeGreaterThan(0);
@@ -329,7 +671,7 @@ test('chart hover renders session names instead of a turn-count-only tooltip', a
   const bounds = await canvas.boundingBox();
   expect(bounds).not.toBeNull();
   await canvas.hover({ position: { x: bounds!.width / 2, y: bounds!.height - 45 } });
-  const overlay = page.getByRole('tooltip');
+  const overlay = page.getByRole('dialog');
   await expect(overlay).toContainText(/How does recursion use the stack\?|Why does the parser fail\?/);
   await expect(overlay.locator('.curiosity-hover-heading p')).toHaveText('Sep 28 - Sep 30');
   await expect(overlay).not.toContainText('2026-09');
@@ -348,17 +690,17 @@ test('overlays the same exact Explore share in both chart views and previews cou
   await page.goto(URL);
   const legend = page.locator('.curiosity-share-legend');
   await expect(legend).toHaveText('Explore share66.7%');
-  await expect(legend).toHaveAttribute('title', /all inquiry turns.*all inquiry \+ Build turns.*Unclassified turns are excluded/);
-  await expect(page.locator('.curiosity-legend')).toContainText('Build4');
+  await expect(legend).toHaveAttribute('title', /all inquiry turns.*all inquiry \+ Task execution turns.*Unclassified turns are excluded/);
+  await expect(page.locator('.curiosity-legend')).toContainText('Task execution4');
   await expect.poll(() => page.evaluate(() => (window as MockWindow).curiosityPoints?.length)).toBe(1);
   const points = await page.evaluate(() => (window as MockWindow).curiosityPoints!);
   const canvas = page.locator('#curiosityBalance');
   await canvas.hover({ position: points[0] });
-  const overlay = page.getByRole('tooltip');
+  const overlay = page.getByRole('dialog');
   await expect(overlay.getByRole('heading')).toHaveText('Explore share');
-  await expect(overlay).toContainText('66.7% Explore / 33.3% Build; 8 Explore + 4 Build turns');
-  await expect(overlay).toContainText('How does recursion use the stack?');
-  await expect(overlay).toContainText('What does the Python reference say?');
+  await expect(overlay).toContainText('66.7% Explore / 33.3% Task execution; 8 Explore + 4 Task execution turns');
+  await expect(overlay).toContainText('Can you add the tests?');
+  await expect(overlay).toContainText('Can you change this parser?');
   await expect(canvas).toHaveCSS('cursor', 'pointer');
   await overlay.hover();
   await page.waitForTimeout(220);
@@ -375,10 +717,10 @@ test('overlays the same exact Explore share in both chart views and previews cou
     return ['0%', '50%', '100%'].every(text => labels.some(item => item.text === text));
   })).toBe(true);
   await canvas.press('ArrowRight');
-  await expect(overlay).toContainText('66.7% Explore / 33.3% Build');
+  await expect(overlay).toContainText('66.7% Explore / 33.3% Task execution');
 });
 
-test('connects recorded points across empty dates without adding values and exposes Build-only periods', async ({ page }) => {
+test('connects recorded points across empty dates without adding values and exposes execution-only periods', async ({ page }) => {
   await captureSharePoints(page);
   await page.goto(URL);
   const data = await dataFor(page);
@@ -404,16 +746,16 @@ test('connects recorded points across empty dates without adding values and expo
   expect(await page.evaluate(() => (window as MockWindow).curiosityCurveStarts)).toEqual([sorted[0].x]);
   const canvas = page.locator('#curiosityBalance');
   await canvas.hover({ position: sorted[2] });
-  const overlay = page.getByRole('tooltip');
-  await expect(overlay).toContainText('0% Explore / 100% Build; 0 Explore + 4 Build turns');
+  const overlay = page.getByRole('dialog');
+  await expect(overlay).toContainText('0% Explore / 100% Task execution; 0 Explore + 4 Task execution turns');
   await page.keyboard.press('Escape');
   await canvas.press('ArrowLeft');
   await expect(overlay).toContainText('2026-09-30 to 2026-09-30');
-  await expect(overlay).toContainText('0% Explore / 100% Build');
-  await expect(overlay).toContainText('How does recursion use the stack?');
+  await expect(overlay).toContainText('0% Explore / 100% Task execution');
+  await expect(overlay).toContainText('Implement the cache.');
   await canvas.press('ArrowLeft');
   await expect(overlay).toContainText('2026-09-28 to 2026-09-28');
-  await expect(overlay).toContainText('25% Explore / 75% Build');
+  await expect(overlay).toContainText('25% Explore / 75% Task execution');
 });
 
 test('uses a hand cursor and keeps chart previews clear of the pointer without blinking', async ({ page }) => {
@@ -423,7 +765,7 @@ test('uses a hand cursor and keeps chart previews clear of the pointer without b
   const bounds = (await canvas.boundingBox())!;
   const position = { x: bounds.width / 2, y: bounds.height - 45 };
   await canvas.hover({ position });
-  const overlay = page.getByRole('tooltip');
+  const overlay = page.getByRole('dialog');
   await expect(overlay).toBeVisible();
   await expect(canvas).toHaveCSS('cursor', 'pointer');
   const preview = (await overlay.boundingBox())!;
@@ -456,14 +798,15 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
     await patchCuriosity(page, { counts, coverage: { ...data.coverage, classified: 100, human: 100 },
       daily: [{ date: '2026-09-30', counts, sessions: {
         direct: Array.from({ length: 8 }, (_, index) => ({ ...data.research.web.sessionSamples[0],
-          sessionId: `long-${index}`, name: 'Explain the state transitions and cache invalidation in this project. '.repeat(2).slice(0, 80) })),
+          sessionId: `long-${index}`, promptPreview: 'Explain the state transitions and cache invalidation in this project. '.repeat(2).slice(0, 80),
+          promptTruncated: true })),
         web: [], repository: [], action: [],
       } }] });
     await page.getByRole('button', { name: 'All time', exact: true }).click();
     const canvas = page.locator('#curiosityBalance');
     const bounds = (await canvas.boundingBox())!;
     await canvas.hover({ position: { x: bounds.width / 2, y: bounds.height - 45 } });
-    const overlay = page.getByRole('tooltip');
+    const overlay = page.getByRole('dialog');
     await expect(overlay).toBeVisible();
     await page.waitForTimeout(300);
     await expect(overlay).toBeInViewport({ ratio: 1 });
@@ -487,19 +830,19 @@ test('selects daily, weekly or monthly granularity from the range and actual all
   await expect(page.getByRole('img', { name: 'Weekly Explore turns with Explore share on a 0 to 100 percent scale', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'All turns', exact: true }).click();
   await page.getByRole('button', { name: 'Last 7 days', exact: true }).click();
-  await page.getByRole('button', { name: 'All turns', exact: true }).click();
-  await expect(page.getByRole('img', { name: 'Daily Explore and Build turns with Explore share on a 0 to 100 percent scale', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'All turns', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('img', { name: 'Daily Explore and Task execution turns with Explore share on a 0 to 100 percent scale', exact: true })).toBeVisible();
   await expect(page.locator('[aria-label="Chart measure"] button')).toHaveText(['Explore', 'All turns']);
   await expect(page.getByRole('button', { name: 'Turn share', exact: true })).toHaveCount(0);
   await expect(page.getByRole('group', { name: 'Chart interval', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^(Daily|Weekly|View periods)$/ })).toHaveCount(0);
   for (const [range, interval] of [['Last 4 weeks', 'Weekly'], ['Last 3 months', 'Weekly'], ['Last 6 months', 'Monthly'], ['All time', 'Daily']]) {
     await page.getByRole('button', { name: range, exact: true }).click();
-    await expect(page.getByRole('img', { name: `${interval} Explore turns with Explore share on a 0 to 100 percent scale`, exact: true })).toBeVisible();
+    await expect(page.getByRole('img', { name: `${interval} Explore and Task execution turns with Explore share on a 0 to 100 percent scale`, exact: true })).toBeVisible();
   }
 });
 
-test('loads whole-week session names with a scoped RPC and leaves global totals unchanged', async ({ page }) => {
+test('loads whole-week sampled prompts with a scoped RPC and leaves global totals unchanged', async ({ page }) => {
   await page.goto(URL);
   await page.evaluate(() => {
     const root = window as MockWindow;
@@ -512,7 +855,7 @@ test('loads whole-week session names with a scoped RPC and leaves global totals 
   await page.locator('#curiosityBalance').press('Enter');
   await expect.poll(() => page.evaluate(() => (window as MockWindow).curiosityParams))
     .toMatchObject({ fromDate: '2026-09-28', toDate: '2026-09-30' });
-  await expect(page.locator('.curiosity-session-list')).toContainText('What does the Python reference say?');
+  await expect(page.locator('.curiosity-session-list')).toContainText('Can you change this parser?');
   await expect(page.locator(values)).toHaveText(['3', '8', '2']);
   await page.getByRole('button', { name: 'Back to chart', exact: true }).click();
   await expect(page.locator('#curiosityBalance')).toBeVisible();
@@ -526,16 +869,16 @@ test('ignores a late period response after a new selection', async ({ page }) =>
   });
   await page.getByRole('button', { name: 'Last 7 days', exact: true }).click();
   await page.locator('#curiosityBalance').press('ArrowRight');
-  await expect(page.getByRole('tooltip')).toContainText('2026-09-28 to 2026-09-28');
+  await expect(page.getByRole('dialog')).toContainText('2026-09-28 to 2026-09-28');
   await page.locator('#curiosityBalance').press('Enter');
   await expect(page.locator('.curiosity-trend [role="status"]')).toBeVisible();
   await page.getByRole('button', { name: 'Back to chart', exact: true }).click();
   await page.locator('#curiosityBalance').press('ArrowRight');
-  await expect(page.getByRole('tooltip')).toContainText('2026-09-30 to 2026-09-30');
+  await expect(page.getByRole('dialog')).toContainText('2026-09-30 to 2026-09-30');
   await page.locator('#curiosityBalance').press('Enter');
-  await expect(page.locator('.curiosity-session-list')).toContainText('What does the Python reference say?');
+  await expect(page.locator('.curiosity-session-list')).toContainText('Can you change this parser?');
   await page.waitForTimeout(650);
-  await expect(page.locator('.curiosity-session-list')).not.toContainText('How does recursion use the stack?');
+  await expect(page.locator('.curiosity-session-list')).not.toContainText('Can you add the tests?');
 });
 
 test('shows recoverable session and page errors', async ({ page }) => {
@@ -679,15 +1022,15 @@ test('links to Prompt Quality without an extra check view when evidence is insuf
 test('supports keyboard session previews for languages and activity labels', async ({ page }) => {
   await page.goto(URL);
   await page.locator('.curiosity-language-list').getByRole('button', { name: /Python/ }).focus();
-  await expect(page.getByRole('tooltip').getByRole('heading')).toHaveText('Python');
-  await expect(page.getByRole('tooltip')).toContainText('What does the Python reference say?');
+  await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('Python');
+  await expect(page.getByRole('dialog')).toContainText('What does the Python reference say?');
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('tooltip')).toBeHidden();
+  await expect(page.getByRole('dialog')).toBeHidden();
   await page.locator('.curiosity-legend > span').filter({ hasText: 'Program comprehension' }).focus();
-  await expect(page.getByRole('tooltip').getByRole('heading')).toHaveText('Program comprehension');
-  await expect(page.getByRole('tooltip').locator('li')).toHaveCount(2);
+  await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('Program comprehension');
+  await expect(page.getByRole('dialog').locator('li')).toHaveCount(2);
   await page.getByRole('button', { name: 'All turns', exact: true }).focus();
-  await expect(page.getByRole('tooltip')).toBeHidden();
+  await expect(page.getByRole('dialog')).toBeHidden();
 });
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 1024, height: 768 }, { width: 760, height: 900 }, { width: 390, height: 844 }]) {
@@ -725,15 +1068,15 @@ test('makes navigation available in a narrow viewport without consuming dashboar
 });
 
 for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
-  test(`wraps long session names and keeps overlays and details within ${viewport.width}x${viewport.height}`, async ({ page }) => {
+  test(`wraps long prompt previews and keeps overlays and details within ${viewport.width}x${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto(URL);
     const data = await dataFor(page);
-    const sessionName = 'Explain the state transitions and cache invalidation in this project. '.repeat(2).slice(0, 80);
+    const promptPreview = 'Explain the state transitions and cache invalidation in this project. '.repeat(2).slice(0, 80);
     const workspace = 'workspace-with-a-long-recorded-name-'.repeat(2);
     await patchCuriosity(page, {
       research: { ...data.research, web: { ...data.research.web, sessionSamples: Array.from({ length: 8 }, (_, index) => ({
-        ...data.research.web.sessionSamples[0], sessionId: `session-${index}`, name: sessionName, workspace,
+        ...data.research.web.sessionSamples[0], sessionId: `session-${index}`, promptPreview, promptTruncated: true, workspace,
       })) } },
     });
     await page.getByRole('button', { name: 'All time', exact: true }).click();
@@ -744,11 +1087,11 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
       .map(element => element.className || element.id))).toEqual([]);
     const source = page.getByRole('region', { name: 'Recorded investigation sources' }).getByRole('button', { name: /Web sources/ });
     await source.hover();
-    const overlay = page.getByRole('tooltip');
+    const overlay = page.getByRole('dialog');
     expect(await overlay.locator('li').count()).toBeGreaterThan(0);
     expect(await overlay.locator('li').count()).toBeLessThanOrEqual(5);
-    await expect(overlay.locator('.curiosity-hover-name').first()).toHaveText(sessionName);
-    expect(await overlay.locator('.curiosity-hover-name').first().evaluate(element =>
+    await expect(overlay.locator('.curiosity-prompt-toggle').first()).toHaveText(`${promptPreview}...`);
+    expect(await overlay.locator('.curiosity-prompt-toggle').first().evaluate(element =>
       element.getBoundingClientRect().height / Number.parseFloat(getComputedStyle(element).lineHeight))).toBeGreaterThan(1.5);
     await expect(overlay).toBeInViewport({ ratio: 1 });
     const bounds = await overlay.boundingBox();
@@ -767,23 +1110,23 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
     await page.keyboard.press('Escape');
     await expect(overlay).toBeHidden();
     await source.click();
-    await expect(page.locator('.curiosity-session-list')).toContainText(sessionName);
+    await expect(page.locator('.curiosity-session-list')).toContainText(promptPreview);
     await fits();
     await page.getByRole('button', { name: 'Next sessions', exact: true }).click();
     await fits();
   });
 }
 
-test('escapes untrusted session names in hover and inspection', async ({ page }) => {
+test('escapes untrusted prompt previews in hover and inspection', async ({ page }) => {
   await page.goto(URL);
   const data = await dataFor(page);
   const name = '<img src=x onerror="window.questionExecuted=true">';
   await patchCuriosity(page, { research: { ...data.research, web: { ...data.research.web,
-    sessionSamples: [{ ...data.research.web.sessionSamples[0], name }] } } });
+    sessionSamples: [{ ...data.research.web.sessionSamples[0], promptPreview: name }] } } });
   await page.getByRole('button', { name: 'All time', exact: true }).click();
   const source = page.getByRole('region', { name: 'Recorded investigation sources' }).getByRole('button', { name: /Web sources/ });
   await source.hover();
-  await expect(page.getByRole('tooltip')).toContainText(name);
+  await expect(page.getByRole('dialog')).toContainText(name);
   await source.click();
   await expect(page.locator('.curiosity-session-list')).toContainText(name);
   await expect(page.locator('#curiosity-results img')).toHaveCount(0);

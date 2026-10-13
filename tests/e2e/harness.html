@@ -83,12 +83,13 @@ function acquireVsCodeApi() {
   return {
     postMessage(msg) {
       if (msg.type === 'request') {
-        const data = getMockData(msg.method, msg.params);
-        setTimeout(() => {
-          window.dispatchEvent(new MessageEvent('message', {
-            data: { type: 'response', id: msg.id, data }
-          }));
-        }, window.mockResponseDelay ? window.mockResponseDelay(msg.method, msg.params) : 5);
+        Promise.resolve(getMockData(msg.method, msg.params)).then(data => {
+          setTimeout(() => {
+            window.dispatchEvent(new MessageEvent('message', {
+              data: { type: 'response', id: msg.id, data }
+            }));
+          }, window.mockResponseDelay ? window.mockResponseDelay(msg.method, msg.params) : 5);
+        });
       }
     },
     getState() { return {}; },
@@ -107,9 +108,7 @@ function genLabels(n) {
   return r;
 }
 
-function getMockCuriosity(params = {}) {
-  const activities = ['direct', 'web', 'repository', 'action'];
-  const empty = () => ({ direct: 0, web: 0, repository: 0, action: 0 });
+function mockCuriositySessions() {
   const sessions = [
     { id: 's1', workspaceId: 'ws-1', workspace: 'my-api', date: '2026-09-28', files: ['src/a.ts'],
       context: [{ kind: 'web', label: 'learn.microsoft.com', turns: 2 }, { kind: 'repository', label: 'src/', turns: 3 }], turns: [
@@ -128,7 +127,31 @@ function getMockCuriosity(params = {}) {
     { id: 's3', workspaceId: 'ws-1', workspace: 'my-api', date: '2026-09-30', files: [], turns: [
       ['direct', 'Why does the parser fail?'], ['action', 'Run the command.'],
     ] },
-  ].filter(session => (!params.workspaceId || session.workspaceId === params.workspaceId)
+  ];
+  if (typeof window.mockCuriosityPrompt === 'string') {
+    for (const session of sessions) for (const turn of session.turns) turn[1] = window.mockCuriosityPrompt;
+  }
+  return sessions;
+}
+
+function mockCuriositySessionDetail(sessionId) {
+  const session = mockCuriositySessions().find(session => session.id === sessionId);
+  if (!session) return null;
+  return {
+    sessionId, workspaceId: session.workspaceId, workspaceName: session.workspace, harness: 'Local Agent',
+    requests: session.turns.map(([, text], index) => ({
+      requestId: `${sessionId}-${index}`, timestamp: Date.parse(`${session.date}T12:00:00Z`) + index * 60000,
+      messageText: text, messageLength: text.length, responseText: 'A recorded answer.', responseLength: 18,
+      toolsUsed: [], editedFiles: [], referencedFiles: [], skillsUsed: [], modelId: '', agentName: '',
+      agentMode: '', isCanceled: false, userCode: [], aiCode: [],
+    })),
+  };
+}
+
+function getMockCuriosity(params = {}) {
+  const activities = ['direct', 'web', 'repository', 'action'];
+  const empty = () => ({ direct: 0, web: 0, repository: 0, action: 0 });
+  const sessions = mockCuriositySessions().filter(session => (!params.workspaceId || session.workspaceId === params.workspaceId)
     && (!params.harness || params.harness === 'Local Agent')
     && (!params.fromDate || session.date >= params.fromDate) && (!params.toDate || session.date <= params.toDate));
   const rows = new Map();
@@ -150,7 +173,9 @@ function getMockCuriosity(params = {}) {
   const repeated = new Map();
   for (const session of sessions) {
     const languages = new Set(session.files.flatMap(file => file.endsWith('.ts') ? ['TypeScript'] : file.endsWith('.py') ? ['Python'] : []));
-    const reference = { sessionId: session.id, name: session.turns[0][1], date: session.date,
+    const firstPrompt = session.turns[0][1].replaceAll(/\s+/g, ' ').trim();
+    const reference = { sessionId: session.id, requestId: `${session.id}-0`, workspaceId: session.workspaceId,
+      name: firstPrompt.slice(0, 80), promptPreview: firstPrompt.slice(0, 80), promptTruncated: firstPrompt.length > 80, date: session.date,
       timestamp: Date.parse(`${session.date}T12:00:00Z`), workspace: session.workspace, harness: 'Local Agent', context: session.context };
     const counts = empty();
     for (const [activity] of session.turns) if (activities.includes(activity)) counts[activity]++;
@@ -171,6 +196,7 @@ function getMockCuriosity(params = {}) {
     if (counts.action) data.sessionCounts.action++;
     if (hasInquiry && counts.action) data.sessionCounts.mixed++;
     const sources = new Set();
+    const sourceSamples = new Map();
     let run = [];
     const finish = () => {
       if (run.length >= 2) {
@@ -191,12 +217,15 @@ function getMockCuriosity(params = {}) {
         finish(); return;
       }
       data.counts[activity]++; data.coverage.classified++;
+      const prompt = text.replaceAll(/\s+/g, ' ').trim();
+      const sample = { ...reference, requestId: `${session.id}-${index}`, timestamp: reference.timestamp + index * 60000,
+        promptPreview: prompt.slice(0, 80), promptTruncated: prompt.length > 80 };
       const day = daily.get(session.date) || empty(); day[activity]++; daily.set(session.date, day);
       const names = dailySessions.get(session.date) || { direct: [], web: [], repository: [], action: [] };
-      if (!names[activity].some(item => item.sessionId === reference.sessionId)) names[activity].push(reference);
+      const existing = names[activity].findIndex(item => item.sessionId === reference.sessionId);
+      if (existing < 0) names[activity].push(sample); else names[activity][existing] = sample;
       dailySessions.set(session.date, names);
       if (questionLed) data.questionLedActions++;
-      const sample = { ...reference, timestamp: reference.timestamp + index * 60000 };
       const tools = [...(activity === 'web' ? ['web_search'] : activity === 'repository' ? ['view', 'web_fetch'] : activity === 'action' ? ['bash'] : []),
         ...(specialTool ? [specialTool] : []), ...(role ? ['task'] : [])];
       if (session.id === 's1' && index === 0) data.coverage.legacyAnswers++;
@@ -207,6 +236,7 @@ function getMockCuriosity(params = {}) {
         row.turns++;
         if (activity === 'action') row.withinAction++;
         sources.add(source);
+        sourceSamples.set(source, sample);
       }
       data.evidence[activity].push(sample);
       if (activity === 'action') finish(); else {
@@ -221,7 +251,7 @@ function getMockCuriosity(params = {}) {
     finish();
     for (const source of sources) {
       data.research[source].sessions++;
-      data.research[source].sessionSamples.push(reference);
+      data.research[source].sessionSamples.push(sourceSamples.get(source));
     }
   }
   data.languages = [...rows.values()];
@@ -570,7 +600,7 @@ function getMockData(method, params) {
     getDataExplorerFields: () => ([]),
     getRuleEditor: () => ({ rules: [], previews: [], layers: [], pending: [] }),
     getSessions: () => ({ sessions: [], totalCount: 0 }),
-    getSessionDetail: () => null,
+    getSessionDetail: () => mockCuriositySessionDetail(params.sessionId),
     getMetricList: () => ([]),
     getRuleCoverage: () => ({ rules: [], workspaces: [], matrix: {} }),
     getRulePreview: () => ({ matches: [] }),

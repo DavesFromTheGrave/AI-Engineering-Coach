@@ -49,7 +49,7 @@ export function curiosityAntiPatterns(data: CuriosityData): AntiPattern[] {
     patterns.push({
       id: 'curiosity-balance', name: `Curiosity balance: ${CURIOSITY_TIER_LABELS[data.balance.tier]}`,
       severity, group: 'prompt-quality', occurrences: 1, aggregate: true,
-      description: `${inquiries} inquiry / ${data.counts.action} Build turns (${percent(inquiries, total)} / ${percent(data.counts.action, total)}). `
+      description: `${inquiries} inquiry / ${data.counts.action} Task execution turns (${percent(inquiries, total)} / ${percent(data.counts.action, total)}). `
         + `Inquiry mix: model knowledge ${percent(data.counts.direct, inquiries)}, web ${percent(data.counts.web, inquiries)}, repository ${percent(data.counts.repository, inquiries)}. `
         + `${data.balance.warnings.map(warning => warning.title).join('; ')}. `
         + `Coaching ranges for mixed coding work: ${percent(thresholds.suggestedLowInquiry, 1)}-${percent(thresholds.suggestedHighInquiry, 1)} inquiry, with no single inquiry type above ${percent(thresholds.maxInvestigationShare, 1)}. `

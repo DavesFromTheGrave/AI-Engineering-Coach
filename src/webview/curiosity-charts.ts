@@ -10,7 +10,7 @@ export const ACTIVITIES: { id: CuriosityActivity; label: string }[] = [
   { id: 'direct', label: 'Model knowledge inquiry' },
   { id: 'web', label: 'Web-grounded inquiry' },
   { id: 'repository', label: 'Program comprehension' },
-  { id: 'action', label: 'Build' },
+  { id: 'action', label: 'Task execution' },
 ];
 
 export interface ActivityBucket { from: string; to: string; counts: ActivityCounts; sessions: Record<CuriosityActivity, CuriositySession[]> }
