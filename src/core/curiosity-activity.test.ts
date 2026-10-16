@@ -41,6 +41,21 @@ describe('Recorded Curiosity tools', () => {
     expect(classifyCuriosityActivity(make(['AskUserQuestion']))).toBe('clarification');
   });
 
+  it.each(['powershell', 'functions.powershell', 'read_powershell', 'functions.stop_powershell'])(
+    'classifies recorded PowerShell command tools as actions: %s', tool => {
+      const request = createRequest({ messageText: 'Run the tests.', responseText: '', toolsUsed: [tool],
+        curiosity: detectCuriosity('Run the tests.') });
+      expect(classifyCuriosityActivity(request)).toBe('action');
+      expect(hasRecordedToolEvidence(tool)).toBe(false);
+    });
+
+  it('keeps PowerShell process listing neutral and unknown lookalikes unknown', () => {
+    const request = createRequest({ messageText: 'Why does the process stop?', responseText: 'An answer.',
+      toolsUsed: ['functions.list_powershell'], curiosity: detectCuriosity('Why does the process stop?'), answerEvidence: 'final' });
+    expect(classifyCuriosityActivity(request)).toBe('direct');
+    expect(classifyCuriosityActivity({ ...request, toolsUsed: ['custom_powershell_tool'] })).toBe('unknownTool');
+  });
+
   it('uses recorded roles for investigation evidence, never agent names or prompt keywords', () => {
     expect(recordedInvestigation('functions.task', { agent_type: 'research' })).toBe('research');
     expect(recordedInvestigation('Agent', { subagent_type: 'Explore' })).toBe('explore');

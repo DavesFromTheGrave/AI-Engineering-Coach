@@ -14,6 +14,7 @@ import { EditLocIndex } from './edit-loc-diff';
 import { parseCLIEventsFile, parseCLIEventsFileAsync } from './parser-vscode-cli';
 import { getParseWarningCounts, resetParseWarnings, setCuriosityDetector } from './parser-shared';
 import { detectCuriosity } from './curiosity';
+import { CuriosityAnalyzer } from './analyzer-curiosity';
 
 const tempDirs: string[] = [];
 
@@ -50,6 +51,25 @@ afterEach(() => {
 });
 
 describe('parseCLIEventsFileAsync', () => {
+  it('classifies PowerShell-only commands and parallel calls through both parser paths', async () => {
+    setCuriosityDetector(detectCuriosity);
+    const file = writeEvents([
+      SAMPLE_EVENTS[0],
+      { type: 'user.message', id: 'p1', timestamp: '2026-09-30T12:00:00Z', data: { content: 'Run the tests.' } },
+      { type: 'tool.execution_start', data: { toolName: 'powershell', arguments: { command: 'npm test' } } },
+      { type: 'user.message', id: 'p2', timestamp: '2026-09-30T12:01:00Z', data: { content: 'Run the build.' } },
+      { type: 'tool.execution_start', data: { toolName: 'multi_tool_use.parallel', arguments: { tool_uses: [
+        { recipient_name: 'functions.powershell', parameters: { command: 'npm run build' } },
+      ] } } },
+    ]);
+    for (const parsed of [parseCLIEventsFile(file, 'ws', 'Workspace'), await parseCLIEventsFileAsync(file, 'ws', 'Workspace')]) {
+      expect(parsed?.requests.map(request => request.toolsUsed)).toEqual([['powershell'], ['functions.powershell']]);
+      const data = new CuriosityAnalyzer(parsed ? [parsed] : [], new Map()).getCuriosity();
+      expect(data.counts).toEqual({ direct: 0, web: 0, repository: 0, action: 2 });
+      expect(data.coverage.reasons.unknownTool).toBe(0);
+    }
+  });
+
   it('captures web domains from explicit calls and parallel wrappers without leaking them into later turns', async () => {
     const file = writeEvents([
       SAMPLE_EVENTS[0],

@@ -24,7 +24,7 @@ export class InquirySequences {
   private run: InquiryRun | undefined;
 
   add(request: SessionRequest, id: string, activity: CuriosityActivity | UnclassifiedReason,
-    reference: (timestamp: number) => CuriositySession): void {
+    reference: (request: SessionRequest) => CuriositySession): void {
     if (request.curiosity?.kind === 'excluded') {
       if (request.toolsUsed.length || request.editedFiles.length) this.finish();
       return;
@@ -37,7 +37,7 @@ export class InquirySequences {
     const timestamp = request.timestamp!;
     if (activity === 'action' || this.run && timestamp - this.run.lastQuestionAt > 86_400_000) this.finish();
     if (activity === 'action') return;
-    this.run ??= { ids: [], session: reference(timestamp), lastQuestionAt: timestamp, timingComplete: true, responseEnd: 0 };
+    this.run ??= { ids: [], session: reference(request), lastQuestionAt: timestamp, timingComplete: true, responseEnd: 0 };
     this.run.ids.push(id);
     this.run.lastQuestionAt = timestamp;
     const elapsed = request.totalElapsed;

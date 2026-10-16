@@ -1737,7 +1737,10 @@
 }
 .curiosity-toolbar { flex-wrap: wrap; }
 .curiosity-title { justify-content: start; }
+.curiosity-title-group { flex: 1; min-width: 0; }
 .curiosity-toolbar h1 { margin: 0; }
+.curiosity-about-panel { max-width: 70ch; max-height: min(160px, 30vh); overflow-y: auto; font-size: 12px; line-height: 1.6; padding-top: 8px; }
+.curiosity-about-panel p + p { margin-top: 8px; color: var(--curiosity-secondary); }
 .curiosity-caption { color: var(--curiosity-secondary); font-size: 12px; }
 .curiosity-range { margin: 0; max-width: 100%; flex-wrap: wrap; }
 .curiosity-range .cons-range-btn.active { color: var(--list-active-fg); }
@@ -1797,7 +1800,7 @@
 .curiosity-pagination span { white-space: nowrap; color: var(--curiosity-secondary); }
 .curiosity-text-button { padding: 3px 0; border: 0; background: transparent; color: var(--accent-blue); cursor: pointer; font-family: inherit; font-size: 11px; }
 .curiosity-text-button:hover { text-decoration: underline; }
-.curiosity-session-list { list-style: none; min-width: 0; }
+.curiosity-session-list { list-style: none; min-width: 0; min-height: 0; flex: 1; overflow-y: auto; }
 .curiosity-session-list li { padding: 10px 0; border-bottom: 1px solid var(--border); min-width: 0; }
 .curiosity-session-list a { color: var(--accent-blue); display: block; overflow-wrap: anywhere; font-weight: 500; }
 .curiosity-session-list small { display: block; color: var(--curiosity-secondary); font-size: 11px; margin-top: 4px; overflow-wrap: anywhere; }
@@ -1808,6 +1811,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24); cursor: default;
 }
 .curiosity-hover[hidden] { display: none; }
+.curiosity-hover:has(.curiosity-prompt-reader) { max-height: calc(100vh - 24px); overflow-y: auto; }
 .curiosity-hover-heading { display: flex; gap: 12px; align-items: center; padding: 14px 18px; }
 .curiosity-hover-heading h3 { font-size: 13px; font-weight: 600; }
 .curiosity-hover-heading p { font-size: 11px; margin-top: 2px; color: var(--curiosity-secondary); }
@@ -1816,10 +1820,15 @@
 .curiosity-hover ul { list-style: none; }
 .curiosity-hover li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; padding: 11px 18px; border-top: 1px solid var(--border); }
 .curiosity-hover-session-icon { color: var(--curiosity-secondary); padding-top: 2px; }
-.curiosity-hover-name { display: block; overflow-wrap: anywhere; line-height: 1.5; font-weight: 500; }
 .curiosity-hover small { display: block; color: var(--curiosity-secondary); font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .curiosity-hover .curiosity-hover-duration { grid-column: 2; margin-top: 0; }
 .curiosity-hover-empty { padding: 0 18px 16px; color: var(--curiosity-secondary); }
+.curiosity-prompt-preview { display: block; color: var(--text); font-weight: 700; line-height: 1.5; overflow-wrap: anywhere; }
+.curiosity-prompt-toggle { width: 100%; padding: 0; border: 0; border-radius: 3px; background: transparent; font-family: inherit; font-size: inherit; text-align: left; cursor: pointer; }
+.curiosity-prompt-toggle:hover { text-decoration: underline; }
+.curiosity-prompt-reader { margin-top: 6px; min-width: 0; }
+.curiosity-prompt-reader [role="alert"] { overflow-wrap: anywhere; }
+.curiosity-prompt-text { max-height: min(180px, 35vh); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); line-height: 1.6; }
 .curiosity-context { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; min-width: 0; }
 .curiosity-context-tag { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); font-size: 11px; line-height: 1.4; }
 .curiosity-context-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 170px; }

@@ -101,6 +101,19 @@ describe('native Compromise questions', () => {
     expect(analyzed('Why does v1 fail here?').repeatedQuestions).not.toEqual(analyzed('Why does v2 fail here?').repeatedQuestions);
     expect(analyzed('Why?').repeatedQuestions).toEqual([]);
   });
+
+  it('keeps inline identifiers in question evidence and exact repetition keys', () => {
+    const map = analyzed('How does `Map` store values in JavaScript?');
+    const set = analyzed('How does `Set` store values in JavaScript?');
+    expect(map.features.question).toEqual({ count: 1, excerpts: ['How does Map store values in JavaScript?'] });
+    expect(map.repeatedQuestions).toEqual(['how does map store values in javascript']);
+    expect(set.repeatedQuestions).toEqual(['how does set store values in javascript']);
+    expect(analyzed('how does Map store values in JavaScript').repeatedQuestions).toEqual(map.repeatedQuestions);
+    expect(analyzed('Why does `cache.get` return nothing?').repeatedQuestions)
+      .not.toEqual(analyzed('Why does `cache.set` return nothing?').repeatedQuestions);
+    expect(detectCuriosity('`Map`')).toEqual({ kind: 'excluded', excerpts: [] });
+    expect(analyzed('Recorded code: `Why does Map store values?`').features.question.count).toBe(0);
+  });
 });
 
 describe('curiosity persistence', () => {

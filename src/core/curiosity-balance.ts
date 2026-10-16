@@ -30,7 +30,7 @@ export function curiosityBalance(counts: ActivityCounts, human: number, days: nu
   });
   else if (share < thresholds.suggestedLowInquiry) result.warnings.push({
     id: 'build-heavy', title: 'Project work dominates',
-    recommendation: 'For mixed coding work, consider asking how a change works before the next Build task. An implementation-only period can be intentional.',
+    recommendation: 'For mixed coding work, consider asking how a change works before the next task execution. An implementation-only period can be intentional.',
   });
   else if (share > thresholds.highInquiry) result.warnings.push({
     id: 'little-execution', title: 'Little execution recorded',
